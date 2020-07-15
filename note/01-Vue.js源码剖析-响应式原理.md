@@ -73,3 +73,80 @@ src
 - 执行 dev
   - `npm run dev` 执行打包，用的是 Rollup，-w 参数是监听文件的变化，文件变化自动重新打包
   - 结果
+
+# Vue 的不同构建版本
+
+- `npm run build` 重新打包所有文件
+- [官方文档 - 对不同构建版本的解释](https://cn.vuejs.org/v2/guide/installation.html#%E5%AF%B9%E4%B8%8D%E5%90%8C%E6%9E%84%E5%BB%BA%E7%89%88%E6%9C%AC%E7%9A%84%E8%A7%A3%E9%87%8A)
+- `dist/README.md`
+
+在 NPM 包的 dist/ 目录你将会找到很多不同的 Vue.js 构建版本。这里列出了它们之间的差别：
+|#|UMD|CommonJS|ES Module|
+|--|--|--|--|
+|Full|vue.js|vue.common.js|vue.esm.js|
+|Runtime-only|vue.runtime.js|vue.runtime.common.js|vue.runtime.esm.js|
+|Full(production)|vue.min.js|||
+|Runtime-only(production)|vue.runtime.min.js|||
+
+## 术语
+
+- **完整版**：同时包含 **编译器** 和 **运行时** 的版本。
+
+- **编译器**：用来将模板字符串编译成为 JavaScript 渲染函数的代码。
+
+- **运行时**：用来创建 Vue 实例、渲染并处理虚拟 DOM 等的代码。基本上就是除去编译器的其它一切。
+
+- **[UMD](https://github.com/umdjs/umd)**：UMD 版本可以通过 `<script>` 标签直接用在浏览器中。`vue.js` 默认文件就是运行时 + 编译器的 UMD 版本。
+
+* **[CommonJS](http://wiki.commonjs.org/wiki/Modules/1.1)**：CommonJS 版本用来配合老的打包工具比如 [Browserify](http://browserify.org/) 或 [webpack 1](https://webpack.github.io/)。这些打包工具的默认文件 (`pkg.main`) 是只包含运行时的 CommonJS 版本 (`vue.runtime.common.js`)。
+
+- [ES Module](https://exploringjs.com/es6/ch_modules.html)：从 2.6 开始 Vue 会提供两个 ES Modules (ESM) 构建文件：
+
+  - 为打包工具提供的 ESM：为诸如 [webpack 2](https://webpack.js.org/) 或 [Rollup](https://rollupjs.org/) 提供的现代打包工具。ESM 格式被设计为可以被静态分析，所以打包工具可以利用这一点来进行“tree-shaking”并将用不到的代码排除出最终的包。为这些打包工具提供的默认文件 (`pkg.module`) 是只有运行时的 ES Module 构建 (`vue.runtime.esm.js`)。
+
+  - 为浏览器提供的 ESM (2.6+)：用于在现代浏览器中通过 `<script type="module">` 直接导入。
+
+# 寻找入口文件
+
+查看 `dist/vue.js` 的构建过程
+
+## 执行构建
+
+```shell
+npm run dev
+# "dev": "rollup -w -c scripts/config.js --environment TARGET:web-full-dev"
+# --environment TARGET:web-full-dev 设置环境变量 TARGET
+```
+
+- `scripts/config.js` 的执行过程
+  - 作用：生成 rollup 构建的配置文件
+  - 使用环境变量 TARGET=web-full-dev
+
+```javascript
+// 判断环境变量是否有 TARGET
+// 如果有的话，使用 genConfig() 生成 rollup 配置文件
+if (process.env.TARGET) {
+  module.exports = genConfig(process.env.TARGET)
+} else {
+  // 否则获取全部配置
+  exports.getBuild = genConfig
+  exports.getAllBuilds = () => Object.keys(builds).map(genConfig)
+}
+```
+
+# 从入口开始
+
+`src/platforms/web/entry-runtime-with-compiler.js`
+
+## 通过查看源码解决下面问题
+
+观察以下代码，通过阅读源码，回答在页面上输出的结果
+```javascript
+const vm = new Vue({
+  el: '#app',
+  template: '<h3>Hello template</h3>',
+  render (h) {
+    return h('h4', 'Hello render')
+  }
+})
+```
