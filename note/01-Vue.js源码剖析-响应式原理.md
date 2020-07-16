@@ -141,12 +141,81 @@ if (process.env.TARGET) {
 ## 通过查看源码解决下面问题
 
 观察以下代码，通过阅读源码，回答在页面上输出的结果
+
 ```javascript
 const vm = new Vue({
   el: '#app',
   template: '<h3>Hello template</h3>',
-  render (h) {
+  render(h) {
     return h('h4', 'Hello render')
-  }
+  },
 })
 ```
+
+- 阅读源码记录
+  - `el` 不能是 `body` 或 `html` 标签
+  - 如果没有 `render`，就会把 `template` 转化成 `render` 函数，`render` 优先级高
+  - 如果有 `render()`，直接调用 `mount` 挂载 DOM
+
+```javascript
+// --- src/platforms/web/entry-runtime-with-compiler.js
+// 1. el 不能是 body 或者 html
+if (el === document.body || el === document.documentElement) {
+  process.env.NODE_ENV !== 'production' &&
+    warn(
+      `Do not mount Vue to <html> or <body> - mount to normal elements instead.`
+    )
+  return this
+}
+const options = this.$options
+// resolve template/el and convert to render function
+if (!options.render) {
+  // 2. 把 template/el 转换成 render 函数
+  // ...
+}
+// 3. 调用 mount 方法，挂载 DOM
+return mount.call(this, el, hydrating)
+```
+
+- 调试代码
+  调试的方法
+
+```javascript
+const vm = new Vue({
+  el: '#app',
+  template: '<h3>Hello template</h3>',
+  render(h) {
+    return h('h4', 'Hello render')
+  },
+})
+```
+
+![代码调试](https://tva1.sinaimg.cn/large/007S8ZIlly1ggt55e3i6jj31m20m612p.jpg)
+
+## 问题
+
+- Vue 的构造函数在哪？
+- Vue 实例的成员 / Vue 的静态成员哪里来的？
+
+# Vue 初始化的过程
+
+## 四个导出 Vue 的模块
+
+- src/**platforms/web**/entry-runtime-with-compiler.js
+  - web 平台相关的代码入口
+  - 重写了平台相关的 `$mount()` 方法
+  - 注册了 `Vue.compile()` 方法，传递一个 HTML 字符串返回 `render` 函数
+- src/**platforms/web**/runtime/index.js
+  - web 平台相关
+  - 注册和平台相关的全局指令：`v-model`, `v-show`
+  - 注册和平台相关的全局组件：`transition`, `transition-group`
+  - 全局方法
+    - `__patch__` - 把虚拟DOM 转换成真实 DOM
+    - `$mount` - 挂载方法
+- src/**core**/index.js
+  - 与平台无关
+  - 设置了 Vue 的静态方法，`initGlobalAPI(Vue)`
+- src/**core**/instance/index.js
+  - 与平台无关
+  - 定义了构造函数，调用了 `this._init(options)` 方法
+  - 给 Vue 中混入了常用的实例成员
