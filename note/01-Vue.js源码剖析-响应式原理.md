@@ -20,12 +20,12 @@
 
 ```
 src
-  |-comiler   编译相关
-  |-core      Vue 核心库
-  |-platforms 平台相关代码
-  |-server    SSR，服务端渲染
-  |-sfc       .vue 文件编译为 js 对象
-  |_shared    公共的代码
+  ├─compiler  编译相关
+  ├─core Vue  核心库
+  ├─platforms 平台相关代码
+  ├─server    SSR，服务端渲染
+  ├─sfc       .vue 文件编译为 js 对象
+  └─shared    公共的代码
 ```
 
 ## 了解 Flow
@@ -60,8 +60,7 @@ src
 
 - 设置 sourcemap
 
-  - package.json 文件中 dev 脚本中添加参数 --sourcemap
-
+  - package.json 文件中 dev 脚本中添加参数 `--sourcemap`
     ```json
     {
       "scripts": {
@@ -71,8 +70,13 @@ src
     ```
 
 - 执行 dev
-  - `npm run dev` 执行打包，用的是 Rollup，-w 参数是监听文件的变化，文件变化自动重新打包
+  - `npm run dev` 执行打包，用的是 Rollup，`-w` 参数是监听文件的变化，文件变化自动重新打包
   - 结果
+    ![dist](https://tva1.sinaimg.cn/large/007S8ZIlgy1gh7syhigrbj30k60ouq5t.jpg)
+  - 调试
+    - examples 的示例中引入的 vue.min.js 改为 vue.js
+    - 打开 Chrome 的调试工具中的 source
+      ![source](https://tva1.sinaimg.cn/large/007S8ZIlgy1gh7t3wt2taj30og0fydhc.jpg)
 
 # Vue 的不同构建版本
 
@@ -106,6 +110,40 @@ src
 
   - 为浏览器提供的 ESM (2.6+)：用于在现代浏览器中通过 `<script type="module">` 直接导入。
 
+# Runtime + Compiler vs. Runtime-only
+
+```javascript
+// Compiler
+// 需要编译器，把 template 转换成 render 函数
+// const vm = new Vue({
+//   el: '#app',
+//   template: '<h1>{{ msg }}</h1>',
+//   data: {
+//     msg: 'Hello Vue',
+//   }
+// })
+
+// Runtime
+// 不需要编译器
+const vm = new Vue({
+  el: '#app',
+  render(h) {
+    return h('h1', this.msg)
+  },
+  data: {
+    msg: 'Hello Vue',
+  },
+})
+```
+
+- 推荐使用运行时版本，因为运行时版本相比完整版体积要小约 30%
+- 基于 Vue-Cli 创建的项目默认使用的是 `vue.runtime.esm.js`
+  - 通过查看 webpack 的配置文件
+    ```shell
+    vue inspect > output.js
+    ```
+- **注意**：`*.vue` 文件中的模板是在构建时预编译的，最终打包后的结果不需要编译器，只需要运行时版本即可
+
 # 寻找入口文件
 
 查看 `dist/vue.js` 的构建过程
@@ -120,7 +158,7 @@ npm run dev
 
 - `scripts/config.js` 的执行过程
   - 作用：生成 rollup 构建的配置文件
-  - 使用环境变量 TARGET=web-full-dev
+  - 使用环境变量 `TARGET=web-full-dev`
 
 ```javascript
 // 判断环境变量是否有 TARGET
@@ -133,6 +171,39 @@ if (process.env.TARGET) {
   exports.getAllBuilds = () => Object.keys(builds).map(genConfig)
 }
 ```
+
+- `genConfig(name)`
+  - 根据环境变量 `TARGET` 获取配置信息
+  - `builds[name]` 获取生成配置的信息
+  ```js
+  // Runtime+compiler development build (Browser)
+  'web-full-dev': {
+    entry: resolve('web/entry-runtime-with-compiler.js'),
+    dest: resolve('dist/vue.js'),
+    format: 'umd',
+    env: 'development',
+    alias: { he: './entity-decoder' },
+    banner
+  },
+  ```
+- `resolve()`
+  - 获取入口和出口文件的绝对路径
+  ```js
+  const aliases = require('./alias')
+  const resolve = p => {
+    const base = p.split('/')[0]
+    if (aliases[base]) {
+      return path.resolve(aliases[base], p.slice(base.length + 1))
+    } else {
+      return path.resolve(__dirname, '../', p)
+    }
+  }
+  ```
+
+## 结果
+
+- 把 `src/platforms/web/entry-runtime-with-compiler.js` 构建成 `dist/vue.js`，如果设置 `--sourcemap` 会生成 `vue.js.map`
+- `src/platforms` 文件夹下是 Vue 可以构建成不同平台下使用的库，目前有 `weex` 和 `web`，还有服务器端渲染的库
 
 # 从入口开始
 
@@ -197,7 +268,68 @@ const vm = new Vue({
 - Vue 的构造函数在哪？
 - Vue 实例的成员 / Vue 的静态成员哪里来的？
 
-# Vue 初始化的过程
+# Vue 的构造函数在哪
+
+- `src/platforms/web/entry-runtime-with-compiler.js` 中引用了 `./runtime/index`
+- `src/platforms/web/runtime/index.js`
+
+  - 设置 Vue.config
+  - 设置平台相关的指令和组件
+    - 指令：`v-model`, `v-show`
+    - 组件：`transition`, `transition-group`
+  - 设置平台相关的 `__patch__` 方法（打补丁方法，对比新旧的 VNode）
+  - **设置 \$mount 方法，挂载 DOM**
+
+    ```javascript
+    // install platform runtime directives & components
+    extend(Vue.options.directives, platformDirectives)
+    extend(Vue.options.components, platformComponents)
+
+    // install platform patch function
+    Vue.prototype.__patch__ = inBrowser ? patch : noop
+
+    // public mount method
+    Vue.prototype.$mount = function (
+      el?: string | Element,
+      hydrating?: boolean
+    ): Component {
+      el = el && inBrowser ? query(el) : undefined
+      return mountComponent(this, el, hydrating)
+    }
+    ```
+
+  - `src/platforms/web/runtime.index.js` 中引用了 `core/index`
+  - `src/core/index.js`
+    - 定义了 Vue 的静态方法
+    - `initGlobalAPI(Vue)`
+  - `src/core/index.js` 中引用了 `./instance/index`
+  - `src/core/instance/index.js`
+
+    - 定义了 Vue 的构建函数
+
+    ```js
+    function Vue(options) {
+      if (process.env.NODE_ENV !== 'production' && !(this instanceof Vue)) {
+        warn('Vue is a constructor and should be called with the `new` keyword')
+      }
+      // 调用 _init() 方法
+      this._init(options)
+    }
+
+    // 注册 vm 的 _init() 方法，初始化 vm
+    initMixin(Vue)
+    // 注册 vm 的 $data/$props/$set/$delete/$watch
+    stateMixin(Vue)
+    // 初始化事件相关方法
+    // $on/$once/$off/$emit
+    eventsMixin(Vue)
+    // 初始化生命周期相关的混入方法
+    // _update/$forceUpdate/$destroy
+    lifecycleMixin(Vue)
+    // 混入 render
+    // $nextTick/_render
+    renderMixin(Vue)
+    ```
 
 ## 四个导出 Vue 的模块
 
@@ -210,7 +342,7 @@ const vm = new Vue({
   - 注册和平台相关的全局指令：`v-model`, `v-show`
   - 注册和平台相关的全局组件：`transition`, `transition-group`
   - 全局方法
-    - `__patch__` - 把虚拟DOM 转换成真实 DOM
+    - `__patch__` - 把虚拟 DOM 转换成真实 DOM
     - `$mount` - 挂载方法
 - src/**core**/index.js
   - 与平台无关
@@ -219,3 +351,206 @@ const vm = new Vue({
   - 与平台无关
   - 定义了构造函数，调用了 `this._init(options)` 方法
   - 给 Vue 中混入了常用的实例成员
+
+# Vue 的初始化
+
+## `src/core/global-api/index.js`
+
+- 初始化 Vue 的静态方法
+
+  ```ts
+  // --- src/core/index.js
+  // 注册 Vue 的静态属性/方法
+  initGlobalAPI(Vue)
+  // --- src/core/global-api/index.js
+  // 初始化 Vue.config 对象
+  Object.defineProperty(Vue, 'config', configDef)
+
+  // exposed util methods.
+  // NOTE: these are not considered part of the public API - avoid relying on
+  // them unless you are aware of the risk.
+  // 这些工具方法不视作全局 API 的一部分，除非你已经意识到某些风险，否则不要去依赖它们
+  Vue.util = {
+    warn,
+    extend,
+    mergeOptions,
+    defineReactive,
+  }
+  // 静态方法 set/delete/nextTick
+  Vue.set = set
+  Vue.delete = del
+  Vue.nextTick = nextTick
+
+  // 2.6 explicit observable API
+  // 让一个对象响应化
+  Vue.observable = <T>(obj: T): T => {
+    observe(obj)
+    return obj
+  }
+  // 初始化 Vue.options 对象，并给其扩展
+  // components/directives/filters
+  Vue.options = Object.create(null)
+  ASSET_TYPES.forEach(type => {
+    Vue.options[type + 's'] = Object.create(null)
+  })
+
+  // this is used to identify the "base" constructor to extend all plain-object
+  // components with in Weex's multi-instance scenarios.
+  Vue.options._base = Vue
+
+  // 设置 keep-alive 组件
+  extend(Vue.options.components, builtInComponents)
+
+  // 注册 Vue.use() 用来注册插件
+  initUse(Vue)
+  // 注册 Vue.mixin() 实现混入
+  initMixin(Vue)
+  // 注册 Vue.extend() 基于传入的 options 放回一个组件的构造函数
+  initExtend(Vue)
+  // 注册 Vue.directive() Vue.component() Vue.filter()
+  initAssetRegisters(Vue)
+  ```
+
+- `src/core/instance/index.js`
+
+  - 定义 Vue 的构造函数
+  - 初始化 Vue 的实例成员
+
+  ```js
+  // 此处不用 class 的原因是为了后续方便给 Vue 实例混入实例成员
+  function Vue(options) {
+    if (process.env.NODE_ENV !== 'production' && !(this instanceof Vue)) {
+      warn('Vue is a constructor and should be called with the `new` keyword')
+    }
+    // 调用 _init() 方法
+    this._init(options)
+  }
+
+  // 注册 vm 的 _init() 方法，初始化 vm
+  initMixin(Vue)
+  // 注册 vm 的 $data/$props/$set/$delete/$watch
+  stateMixin(Vue)
+  // 初始化事件相关方法
+  // $on/$once/$off/$emit
+  eventsMixin(Vue)
+  // 初始化生命周期相关的混入方法
+  // _update/$forceUpdate/$destroy
+  lifecycleMixin(Vue)
+  // 混入 render
+  // $nextTick/_render
+  renderMixin(Vue)
+  ```
+
+- `initMixin(Vue)`
+
+  - 初始化 `_init()` 方法
+
+  ```ts
+  // --- src/core/instance/init.js
+  export function initMixin(Vue: Class<Component>) {
+    // 给 Vue 实例增加 _init() 方法
+    // 合并 options，初始化操作
+    Vue.prototype._init = function (options?: Object) {
+      const vm: Component = this
+      // a uid
+      vm._uid = uid++
+      // a flag to avoid this being observed
+      // 如果是 Vue 实例就不需要 observe
+      vm._isVue = true
+      // merge options
+      // 合并 options
+      if (options && options._isComponent) {
+        // optimize internal component instantiation
+        // since dynamic options merging is pretty slow, and none of the
+        // internal component options needs special treatment.
+        initInternalComponent(vm, options)
+      } else {
+        vm.$options = mergeOptions(
+          resolveConstructorOptions(vm.constructor),
+          options || {},
+          vm
+        )
+      }
+      /* istanbul ignore else */
+      if (process.env.NODE_ENV !== 'production') {
+        initProxy(vm)
+      } else {
+        vm._renderProxy = vm
+      }
+      // expose real self
+      vm._self = vm
+      // vm 的生命周期相关变量初始化
+      // $children/$parent/$root/$refs
+      initLifecycle(vm)
+      // vm 的事件监听初始化，福组建绑定在当前组件上的事件
+      initEvents(vm)
+      // vm 的编译 render 初始化
+      // $slots/$scopedSlots/_c/$createElement/$attrs/$listeners
+      initRender(vm)
+      // beforeCreate 生命钩子的回调
+      callHook(vm, 'beforeCreate')
+      // 把 inject 的成员注入到 vm 上
+      initInjections(vm) // resolve injections before data/props
+      // 初始化状态 vm 的 _props/methods/_data/computed/watch
+      initState(vm)
+      // 初始化 provide
+      initProvide(vm) // resolve provide after data/props
+      // created 生命钩子的回调
+      callHook(vm, 'created')
+
+      /* istanbul ignore if */
+      if (process.env.NODE_ENV !== 'production' && config.performance && mark) {
+        vm._name = formatComponentName(vm, false)
+        mark(endTag)
+        measure(`vue ${vm._name} init`, startTag, endTag)
+      }
+      // 如果没有提供 el，调用 $mount() 挂载
+      if (vm.$options.el) {
+        vm.$mount(vm.$options.el)
+      }
+    }
+  }
+  ```
+
+## 首次渲染过程
+
+- Vue 初始化完毕，开始真正的执行
+- 调用 new Vue() 之前，已经初始化完毕
+- 通过调试代码，记录首次渲染过程
+
+![new Vue](https://tva1.sinaimg.cn/large/007S8ZIlgy1gh7udwumknj30u00usn9j.jpg)
+
+# 数据响应式原理
+
+## 通过查看源码解决下面问题
+
+- `vm.msg = { count: 0 }` 重新给属性赋值，是否是响应式的？
+- `vm.arr[0] = 4` 给数组元素赋值，视图是否会更新
+- `vm.arr.length = 0` 修改数组的 `length`，视图是否会更新
+- `vm.arr.push(4)` 视图是否会更新
+
+## 响应式处理的入口
+
+整个响应式处理的过程是比较复杂的，下面我们先从
+
+- `src/core/instance/init.js`
+
+  - `initState(vm)` vm 状态的初始化
+  - 初始化 `_data`, `_props`, `methods` 等
+
+- `src/core/instance/state.js`
+
+  ```javascript
+  // 数据的初始化
+  if (opts.data) {
+    initData(vm)
+  } else {
+    observe((vm.data = {}), true /* asRootData */)
+  }
+  ```
+
+# Watcher
+
+- Wathcer 分为三种，Computed Watcher、用户 Watcher（监听器）、**渲染 Watcher**
+- 渲染 Watcher 的创建时机
+  - `src/core/instance/lifecycle.js`
